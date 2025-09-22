@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>Mini Stock Simulator + Bot 10 Level</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{
+  --bg:#071020; --panel:#0f1720; --accent:#ffd166; --gain:#2ee6a0; --loss:#ff5b6e;
+  --btn:#ffd166; --btn-text:#000;
+}
+body{margin:0;font-family:Inter,Arial,sans-serif;background:var(--bg);color:#e8eef6;padding:18px;box-sizing:border-box}
+.wrap{max-width:1100px;margin:0 auto}
+header{display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap}
+h1{font-size:18px;margin:0}
+.top-info{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.panel{background:var(--panel);padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.03)}
+.controls{display:flex;gap:8px;align-items:center;margin:12px 0;flex-wrap:wrap}
+input[type=number]{width:90px;padding:8px;border-radius:6px;border:none;text-align:center;font-weight:600}
+button{padding:10px 12px;border-radius:8px;border:none;background:var(--btn);color:var(--btn-text);cursor:pointer;font-weight:700}
+button.sell{background:var(--loss);color:#fff}
+button.reset{background:#09a3ff;color:#fff}
+#chart{display:block;width:100%;height:360px;margin-top:12px;border-radius:8px;background:#040406;border:1px solid rgba(255,255,255,0.03)}
+.bottom{display:flex;gap:16px;margin-top:12px;align-items:flex-start;flex-wrap:wrap}
+#history{flex:1;max-height:300px;overflow:auto;padding:10px;background:#07111a;border-radius:8px;border:1px solid rgba(255,255,255,0.02);font-size:13px}
+.stats{min-width:260px;display:flex;flex-direction:column;gap:8px}
+.stat{background:#0b1116;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.02)}
+.trade.profit{color:var(--gain)}
+.trade.loss{color:var(--loss)}
+.news{margin-top:10px;padding:10px;border-radius:8px;background:#0b1116;border:1px solid rgba(255,255,255,0.03)}
+.small{font-size:12px;color:#9aa3b2}
+.price-up{color:var(--gain);font-weight:700}
+.price-down{color:var(--loss);font-weight:700}
+.bot{margin-top:6px;font-weight:700;font-size:14px;color:#ffd166}
+@media (max-width:720px){
+  .top-info{flex-direction:column;align-items:flex-start}
+  .bottom{flex-direction:column}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Mini Stock Simulator + Bot 10 Level</h1>
+    <div class="top-info">
+      <div class="panel stat">Số dư: $<span id="cash">1000000</span></div>
+      <div class="panel stat">Nắm giữ: <span id="shares">0</span> cp</div>
+      <div class="panel stat">Giá hiện tại: $<span id="price">500.00</span></div>
+      <div class="panel stat">Tổng tài sản: $<span id="total">1000000</span></div>
+      <div class="panel stat">Nến hiện tại: <span id="candleCount">0</span></div>
+      <div class="panel stat">Bot Level: <span id="botLevel">1</span></div>
+      <div class="panel stat">Chi phí nâng cấp: $<span id="botUpgradeCost">100000</span></div>
+    </div>
+  </header>
+
+  <div class="panel">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <div>
+        <label class="small">Số lượng</label><br>
+        <input id="amount" type="number" value="1" min="1">
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button id="buyBtn">MUA</button>
+        <button id="sellBtn" class="sell">BÁN</button>
+        <button id="resetBtn" class="reset">RESET VỐN</button>
+        <button id="upgradeBtn" class="btn">NÂNG CẤP BOT</button>
+      </div>
+      <div style="margin-left:auto;font-size:13px;color:#98a6b8">Biểu đồ: 20 nến, tin mỗi 1 phút, tác động sau 10 nến</div>
+    </div>
+
+    <div class="news" id="newsBox">
+      <div class="small">Tin tức:</div>
+      <div id="newsText">Chưa có tin mới.</div>
+      <div class="bot" id="botHint">Gợi ý bot: —</div>
+    </div>
+
+    <canvas id="chart"></canvas>
+  </div>
+
+  <div class="bottom">
+    <div id="history" class="panel">
+      <div class="small">Lịch sử giao dịch & sự kiện</div>
+      <div id="historyList"></div>
+    </div>
+
+    <div class="stats">
+      <div class="stat">Last event: <span id="lastEvent">—</span></div>
+      <div class="stat small">Chú thích: nến xanh = tăng, đỏ = giảm. Tin xuất hiện KHÔNG hiện REAL/FAKE ngay — chỉ biết sau 10 nến.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const MAX_CANDLES = 20;
+const CANDLE_INTERVAL_MS = 1500;
+const NEWS_INTERVAL_MS = 60000;
+
+let cash = 1000000, shares=0, avgBuyPrice=0, price=500;
+let candles=[], events=[], newsQueue=[], totalCandlesCreated=0;
+let botLevel = 1;
+
+const NEWS_ITEMS = [
+  {text:"Báo cáo tài chính quý vượt dự báo → tăng", type:"up"},
+  {text:"Tin đồn sụt giảm doanh số → giảm", type:"down"},
+  {text:"Chính sách hỗ trợ ngành → tăng", type:"up"},
+  {text:"Sản phẩm lỗi lộ trên mạng → giảm", type:"down"},
+  {text:"Quỹ lớn gom cổ phiếu → tăng", type:"up"},
+  {text:"Cơ quan điều tra mở kiểm tra → giảm", type:"down"}
+];
+
+const canvas = document.getElementById('chart');
+const ctx = canvas.getContext('2d');
+const cashEl = document.getElementById('cash');
+const sharesEl = document.getElementById('shares');
+const priceEl = document.getElementById('price');
+const totalEl = document.getElementById('total');
+const candleCountEl = document.getElementById('candleCount');
+const historyListEl = document.getElementById('historyList');
+const newsTextEl = document.getElementById('newsText');
+const lastEventEl = document.getElementById('lastEvent');
+const botHintEl = document.getElementById('botHint');
+const botLevelEl = document.getElementById('botLevel');
+const botUpgradeCostEl = document.getElementById('botUpgradeCost');
+const buyBtn = document.getElementById('buyBtn');
+const sellBtn = document.getElementById('sellBtn');
+const resetBtn = document.getElementById('resetBtn');
+const upgradeBtn = document.getElementById('upgradeBtn');
+const amountInput = document.getElementById('amount');
+
+function resizeCanvas(){canvas.width = Math.min(window.innerWidth-40,1100);canvas.height = 360;drawChart();}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+function rand(min,max){return Math.random()*(max-min)+min;}
+function randInt(min,max){return Math.floor(Math.random()*(max-min+1))+min;}
+function fmt(n){return Number(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});}
+
+function pushCandle(){
+  const open=price;
+  let high=open, low=open;
+  for(let i=0;i<5;i++){
+    const pct=rand(-1.2,1.2);
+    price=Math.max(0.01,price*(1+pct/100));
+    high=Math.max(high,price);
+    low=Math.min(low,price);
+  }
+  const close = price;
+  candles.push({open, high, low, close});
+  totalCandlesCreated++;
+  if(candles.length>MAX_CANDLES) candles.shift();
+  applyGradualEffects();
+  checkNewsTriggers();
+  updateBotHint();
+  updateUI();
+}
+
+function scheduleNews(){
+  const item = NEWS_ITEMS[randInt(0, NEWS_ITEMS.length-1)];
+  const isReal = Math.random()<0.5;
+  const appearIndex = totalCandlesCreated;
+  const targetIndex = appearIndex+10;
+  const newsObj={item,isReal,appearIndex,targetIndex,triggered:false};
+  newsQueue.push(newsObj);
+  newsTextEl.innerText = item.text;
+  addEvent(`Tin xuất hiện: "${item.text}" (tác động sau 10 nến)`);
+}
+
+function checkNewsTriggers(){
+  newsQueue.forEach(n=>{
+    if(!n.triggered && totalCandlesCreated>=n.targetIndex){
+      n.triggered=true;
+      if(!n.isReal){addEvent(`Tin trước đó ("${n.item.text}") FAKE — không ảnh hưởng.`); return;}
+      const magnitude = rand(5,10);
+      const sign = n.item.type==='up'?1:-1;
+      const totalPct = magnitude*sign;
+      const immediate = Math.random()<0.5;
+      if(immediate){
+        const old=price;
+        price=Math.max(0.01, price*(1+totalPct/100));
+        addEvent(`Tin REAL (IMMEDIATE) "${n.item.text}" → ${totalPct>0?'+':''}${totalPct.toFixed(2)}% → ${fmt(old)} → ${fmt(price)}`);
+      } else {
+        const steps=3;
+        const perStep=totalPct/steps;
+        n.gradual={remaining:steps, perStep};
+        addEvent(`Tin REAL (GRADUAL) "${n.item.text}" → tổng ${totalPct.toFixed(2)}% trên ${steps} nến (${perStep.toFixed(3)}%/nến)`);
+      }
+    }
+  });
+}
+
+function applyGradualEffects(){
+  newsQueue.forEach(n=>{
+    if(n.gradual && n.gradual.remaining>0){
+      const pct=n.gradual.perStep;
+      const old=price;
+      price=Math.max(0.01, price*(1+pct/100));
+      n.gradual.remaining--;
+      addEvent(`Ảnh hưởng dần: ${pct.toFixed(3)}% → ${fmt(old)} → ${fmt(price)} (còn ${n.gradual.remaining} bước)`);
+    }
+  });
+}
+
+function buy(){
+  const amt = Math.max(1, Math.floor(Number(amountInput.value)||1));
+  const cost = Number((price*amt).toFixed(2));
+  if(cost>cash){alert('Không đủ tiền!');return;}
+  const prevTotalCost = avgBuyPrice*shares;
+  const newTotalShares = shares+amt;
+  const newTotalCost = prevTotalCost+cost;
+  avgBuyPrice = newTotalShares?(newTotalCost/newTotalShares):0;
+  cash-=cost; shares+=amt;
+  addEvent(`MUA ${amt} @ $${price.toFixed(2)} — cost $${fmt(cost)} — avgBuyPrice $${fmt(avgBuyPrice)}`);
+  updateUI();
+}
+
+function sell(){
+  const amt = Math.max(1, Math.floor(Number(amountInput.value)||1));
+  if(amt>shares){alert('Không đủ cổ phiếu!');return;}
+  const revenue = Number((price*amt).toFixed(2));
+  cash += revenue; shares -= amt;
+  const profit = Number(((price-avgBuyPrice)*amt).toFixed(2));
+  addEvent((profit>=0?`<span class="trade profit">BÁN ${amt} @ $${price.toFixed(2)} → Lãi $${fmt(profit)}</span>`:
+                               `<span class="trade loss">BÁN ${amt} @ $${price.toFixed(2)} → Lỗ $${fmt(profit)}</span>`));
+  if(shares===0) avgBuyPrice=0;
+  updateUI();
+}
+
+function upgradeBot(){
+  if(botLevel>=10){alert('Bot đã đạt cấp tối đa!'); return;}
+  const cost = botLevel*100000;
+  if(cash<cost){alert('Không đủ tiền nâng cấp bot!'); return;}
+  cash-=cost;
+  botLevel++;
+  addEvent(`Bot nâng cấp lên Level ${botLevel} — tốn $${fmt(cost)}`);
+  updateUI();
+}
+
+function resetGame(){
+  cash=1000000; shares=0; avgBuyPrice=0; price=500; candles=[]; newsQueue=[]; events=[]; totalCandlesCreated=0;
+  botLevel=1;
+  newsTextEl.innerText='Chưa có tin mới.'; botHintEl.innerText='Gợi ý bot: —';
+  addEvent('Game reset.');
+  updateUI();
+}
+
+function addEvent(html){
+  const ev={time:new Date(), html};
+  events.push(ev);
+  if(events.length>300) events.shift();
+  renderHistory();
+}
+
+function renderHistory(){
+  historyListEl.innerHTML = events.slice(-150).reverse().map(e=>{
+    const t = e.time.toLocaleTimeString();
+    return `<div style="padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.02)"><span class="small">${t}</span> — ${e.html}</div>`;
+  }).join('');
+}
+
+function updateUI(){
+  cashEl.innerText=fmt(cash);
+  sharesEl.innerText=shares;
+  priceEl.innerText=price.toFixed(2);
+  totalEl.innerText=fmt(cash+shares*price);
+  candleCountEl.innerText=totalCandlesCreated;
+  botLevelEl.innerText=botLevel;
+  botUpgradeCostEl.innerText=botLevel<10?fmt(botLevel*100000):'—';
+  lastEventEl.innerText=events.length?events[events.length-1].html.replace(/<[^>]+>/g,''):'—';
+  drawChart();
+}
+
+// Bot dự đoán: BUY / SELL / HOLD
+function updateBotHint(){
+  if(candles.length<5){botHintEl.innerText='Gợi ý bot: —'; return;}
+  let trendScore=0;
+  candles.forEach(c=>trendScore += (c.close>c.open?1:-1));
+  trendScore /= candles.length; // từ -1 → +1
+  const lastNews = newsQueue.slice(-1)[0];
+  if(lastNews && lastNews.triggered && lastNews.isReal){
+    trendScore += lastNews.item.type==='up'?0.2:-0.2;
+  }
+  const errorFactor = (10-botLevel)/10; // Level1 kém, Level10 chuẩn
+  const rnd = Math.random()*2-1; 
+  trendScore += rnd*errorFactor;
+  let hint='HOLD';
+  if(trendScore>0.3) hint='BUY';
+  else if(trendScore<-0.3) hint='SELL';
+  botHintEl.innerText=`Gợi ý bot L${botLevel}: ${hint}`;
+}
+
+// Draw candles
+function drawChart(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  if(!candles.length) return;
+  const highs = candles.map(c=>c.high), lows=candles.map(c=>c.low);
+  const maxP = Math.max(...highs), minP = Math.min(...lows);
+  const range=Math.max(0.01,maxP-minP);
+  const candleWidth = canvas.width / MAX_CANDLES *0.8;
+  candles.forEach((c,i)=>{
+    const x = i*(canvas.width/MAX_CANDLES) + (canvas.width/MAX_CANDLES - candleWidth)/2;
+    const yOpen = canvas.height-(c.open-minP)/range*canvas.height;
+    const yClose = canvas.height-(c.close-minP)/range*canvas.height;
+    const yHigh = canvas.height-(c.high-minP)/range*canvas.height;
+    const yLow = canvas.height-(c.low-minP)/range*canvas.height;
+    ctx.strokeStyle=c.close>=c.open?'#2ee6a0':'#ff5b6e';
+    ctx.fillStyle=ctx.strokeStyle;
+    // Wick
+    ctx.beginPath();
+    ctx.moveTo(x+candleWidth/2,yHigh);
+    ctx.lineTo(x+candleWidth/2,yLow);
+    ctx.stroke();
+    // Body
+    ctx.fillRect(x, Math.min(yOpen,yClose), candleWidth, Math.max(1,Math.abs(yOpen-yClose)));
+  });
+  drawPriceLabel(price);
+}
+
+// Price + candle label
+function drawPriceLabel(price){
+  if(!candles.length) return;
+  const highs = candles.map(c=>c.high), lows=candles.map(c=>c.low);
+  const maxP = Math.max(...highs), minP = Math.min(...lows);
+  const range=Math.max(0.01,maxP-minP);
+  const yLatest = canvas.height - ((price - minP)/range)*canvas.height;
+  ctx.fillStyle='rgba(255,209,102,0.95)';
+  ctx.fillRect(canvas.width-120, yLatest-14, 112,28);
+  ctx.fillStyle='#000'; ctx.font='12px Arial';
+  ctx.fillText(`$${price.toFixed(2)} | Nến #${totalCandlesCreated}`, canvas.width-115, yLatest+5);
+}
+
+// Event listeners
+buyBtn.onclick=buy;
+sellBtn.onclick=sell;
+resetBtn.onclick=resetGame;
+upgradeBtn.onclick=upgradeBot;
+
+// Auto loops
+setInterval(pushCandle,CANDLE_INTERVAL_MS);
+setInterval(scheduleNews,NEWS_INTERVAL_MS);
+</script>
+</body>
+</html>
